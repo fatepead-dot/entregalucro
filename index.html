@@ -100,6 +100,14 @@
 
     /* Install banner */
     #install-banner { display: none; position: fixed; top: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 480px; background: var(--accent); color: #000; padding: 12px 18px; z-index: 300; text-align: center; font-weight: 700; font-size: 14px; cursor: pointer; }
+
+    /* Gastos */
+    .alerta-card { border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .alerta-ok { background: rgba(46,204,113,.07); border: 1px solid var(--green); }
+    .alerta-warn { background: rgba(245,166,35,.07); border: 1px solid var(--accent); }
+    .alerta-over { background: rgba(231,76,60,.07); border: 1px solid var(--red); }
+    .prog-wrap { background: var(--input); border-radius: 6px; height: 8px; margin-top: 6px; }
+    .prog-fill { border-radius: 6px; height: 8px; transition: width .4s; }
   </style>
 
   <script>
@@ -142,6 +150,7 @@
     <button class="nav-btn active" onclick="goTab('calc')"><span class="nav-icon">⚡</span><span class="nav-label">Calcular</span></button>
     <button class="nav-btn" onclick="goTab('reg')"><span class="nav-icon">➕</span><span class="nav-label">Registrar</span></button>
     <button class="nav-btn" onclick="goTab('hist')"><span class="nav-icon">📋</span><span class="nav-label">Histórico</span></button>
+    <button class="nav-btn" onclick="goTab('gastos')"><span class="nav-icon">🔧</span><span class="nav-label">Gastos</span></button>
     <button class="nav-btn" onclick="goTab('cfg')"><span class="nav-icon">⚙️</span><span class="nav-label">Config</span></button>
   </nav>
 </div>
@@ -162,13 +171,29 @@ const TIPOS = ["Entrega simples","Corrida casada","Supermercado","Farmácia","Re
 let state = {
   tab: "calc",
   corridas: [],
+  gastos: [],
+  kmAtual: 0,
   custoKm: 0.65,
   custoFixoDia: 25,
   calc: { km:"", valor:"", espera:"0", corridas:"1", plat:"uber" },
   reg: { data: today(), plat:"uber", tipo:"Entrega simples", km:"", valorBruto:"", gorjeta:"0", espera:"0", paradas:"1", obs:"" },
+  regGasto: { data: today(), categoria:"Combustível", desc:"", valor:"", km:"" },
   hist: { filtro:"todas", periodo:"7" },
   cfg: { ck:"", cf:"" },
 };
+
+// Cronograma preventivo padrão [categoria, intervalo km, emoji]
+const PREVENTIVOS = [
+  { id:"oleo",     label:"Troca de óleo",        kmIntervalo: 5000,  emoji:"🛢️" },
+  { id:"filtro",   label:"Filtro de ar",          kmIntervalo: 10000, emoji:"💨" },
+  { id:"pneus",    label:"Rodízio de pneus",      kmIntervalo: 8000,  emoji:"🔄" },
+  { id:"freios",   label:"Verificar freios",      kmIntervalo: 15000, emoji:"🛑" },
+  { id:"correia",  label:"Correia dentada",       kmIntervalo: 40000, emoji:"⚙️" },
+  { id:"velas",    label:"Velas de ignição",      kmIntervalo: 20000, emoji:"⚡" },
+  { id:"alinhamento",label:"Alinhamento/balanceamento", kmIntervalo:10000, emoji:"🎯"},
+];
+
+const CAT_GASTOS = ["Combustível","Manutenção","Pneu","Freios","Óleo","Seguro","IPVA/DPVAT","Multa","Lavagem","Outros"];
 
 function today() {
   return new Date().toISOString().split("T")[0];
@@ -186,24 +211,27 @@ function platBadge(id) {
 function save() {
   try {
     localStorage.setItem("el_corridas", JSON.stringify(state.corridas));
-    localStorage.setItem("el_config", JSON.stringify({custoKm: state.custoKm, custoFixoDia: state.custoFixoDia}));
+    localStorage.setItem("el_gastos", JSON.stringify(state.gastos));
+    localStorage.setItem("el_config", JSON.stringify({custoKm: state.custoKm, custoFixoDia: state.custoFixoDia, kmAtual: state.kmAtual}));
   } catch(e) {}
 }
 function load() {
   try {
     const c = localStorage.getItem("el_corridas");
+    const g = localStorage.getItem("el_gastos");
     const cfg = localStorage.getItem("el_config");
     if (c) state.corridas = JSON.parse(c);
-    if (cfg) { const o = JSON.parse(cfg); state.custoKm = o.custoKm||0.65; state.custoFixoDia = o.custoFixoDia||25; }
+    if (g) state.gastos = JSON.parse(g);
+    if (cfg) { const o = JSON.parse(cfg); state.custoKm = o.custoKm||0.65; state.custoFixoDia = o.custoFixoDia||25; state.kmAtual = o.kmAtual||0; }
   } catch(e) {}
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
-const TAB_TITLES = {dash:"Dashboard",calc:"Calculadora Rápida",reg:"Nova Corrida",hist:"Histórico",cfg:"Configurações"};
+const TAB_TITLES = {dash:"Dashboard",calc:"Calculadora Rápida",reg:"Nova Corrida",hist:"Histórico",gastos:"Gastos & Manutenção",cfg:"Configurações"};
 function goTab(t) {
   state.tab = t;
   document.querySelectorAll(".nav-btn").forEach((b,i) => {
-    const ids = ["dash","calc","reg","hist","cfg"];
+    const ids = ["dash","calc","reg","hist","gastos","cfg"];
     b.classList.toggle("active", ids[i]===t);
   });
   document.getElementById("tab-title").textContent = TAB_TITLES[t];
@@ -215,7 +243,7 @@ function render() {
   if (cnt > 0) { badge.style.display=""; badge.textContent = cnt + " corridas"; }
   else badge.style.display = "none";
   const el = document.getElementById("content");
-  const renders = {dash: renderDash, calc: renderCalc, reg: renderReg, hist: renderHist, cfg: renderCfg};
+  const renders = {dash: renderDash, calc: renderCalc, reg: renderReg, hist: renderHist, gastos: renderGastos, cfg: renderCfg};
   el.innerHTML = renders[state.tab]();
   attachEvents();
 }
@@ -397,9 +425,13 @@ function delCorrida(id) {
 function renderDash() {
   if (state.corridas.length===0) return `<div class="empty"><div class="empty-icon">🚚</div><div class="empty-title">Nenhuma corrida ainda</div><div style="margin-top:8px">Registre sua primeira corrida!</div></div>`;
   const limite = new Date(); limite.setDate(limite.getDate()-30);
+  const mesAtual = new Date().toISOString().slice(0,7);
   const rec = state.corridas.filter(c=>new Date(c.data)>=limite);
   const tLucro = rec.reduce((s,c)=>s+c.lucro,0);
   const tKm = rec.reduce((s,c)=>s+c.km,0);
+  const gastosMes = state.gastos.filter(g=>g.data.startsWith(mesAtual));
+  const totalGastos = gastosMes.reduce((s,g)=>s+g.valor,0);
+  const lucroReal = tLucro - totalGastos;
   const porDia = {};
   rec.forEach(c=>{ porDia[c.data]=(porDia[c.data]||0)+c.lucro; });
   const dias = Object.keys(porDia).length;
@@ -422,6 +454,13 @@ function renderDash() {
       <div class="bar-wrap"><div class="bar-fill" style="background:${p.lucro>0?"var(--green)":"var(--red)"};width:${Math.abs(p.lucro)/maxLucro*100}%"></div></div>
     </div>`).join("");
 
+  const gastosAlert = totalGastos>0 ? `
+    <div style="background:rgba(231,76,60,.07);border:1px solid var(--red);border-radius:14px;padding:14px 18px">
+      <div style="color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px">🔧 Gastos do mês (${gastosMes.length} registros)</div>
+      <div style="color:var(--red);font-size:20px;font-weight:800;margin-top:4px">${brl(totalGastos)}</div>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px">Lucro real após gastos: <strong style="color:${lucroReal>0?"var(--green)":"var(--red)"}">${brl(lucroReal)}</strong></div>
+    </div>` : "";
+
   return `
   <div class="gap-20">
     <div class="stat-row">
@@ -429,9 +468,173 @@ function renderDash() {
       <div class="stat-card"><div class="stat-label">Média/dia</div><div class="stat-value" style="color:var(--accent)">${brl(mediaDia)}</div></div>
       <div class="stat-card"><div class="stat-label">R$/km</div><div class="stat-value" style="color:var(--blue)">${brl(lucroKm)}</div></div>
     </div>
+    ${gastosAlert}
     ${melhor?`<div class="card"><div class="section-title">🏆 Melhor dia</div><div style="color:var(--accent);font-size:22px;font-weight:800">${brl(melhor[1])}</div><div style="color:var(--muted);font-size:13px">${melhor[0]}</div></div>`:""}
     ${porPlat.length>0?`<div class="card"><div class="section-title">📊 Por plataforma</div>${bars}</div>`:""}
   </div>`;
+}
+
+// ─── GASTOS & MANUTENÇÃO ──────────────────────────────────────────────────────
+function renderGastos() {
+  const catOpts = CAT_GASTOS.map(c=>`<option${state.regGasto.categoria===c?" selected":""}>${c}</option>`).join("");
+
+  // Totais do mês atual
+  const agora = new Date();
+  const mesAtual = agora.toISOString().slice(0,7);
+  const gastosMes = state.gastos.filter(g=>g.data.startsWith(mesAtual));
+  const totalMes = gastosMes.reduce((s,g)=>s+g.valor,0);
+
+  // Totais por categoria no mês
+  const porCat = {};
+  gastosMes.forEach(g=>{ porCat[g.categoria]=(porCat[g.categoria]||0)+g.valor; });
+  const maxCat = Math.max(...Object.values(porCat),1);
+
+  // Lucro bruto do mês (corridas)
+  const corridasMes = state.corridas.filter(c=>c.data.startsWith(mesAtual));
+  const lucroMes = corridasMes.reduce((s,c)=>s+c.lucro,0);
+  const lucroReal = lucroMes - totalMes;
+
+  // Cronograma preventivo
+  const alertas = PREVENTIVOS.map(p => {
+    const ultimo = state.gastos
+      .filter(g=>g.preventivo===p.id)
+      .sort((a,b)=>b.kmRegistro-a.kmRegistro)[0];
+    const kmUltimo = ultimo ? ultimo.kmRegistro : 0;
+    const kmProximo = kmUltimo + p.kmIntervalo;
+    const kmFaltam = kmProximo - state.kmAtual;
+    const pct = Math.min(100, Math.max(0, (state.kmAtual - kmUltimo) / p.kmIntervalo * 100));
+    let status = "ok";
+    if (pct >= 100) status = "over";
+    else if (pct >= 80) status = "warn";
+    return {...p, kmUltimo, kmProximo, kmFaltam, pct, status, ultimaData: ultimo?.data||null};
+  });
+
+  const alertasHTML = alertas.map(a => `
+    <div class="alerta-card alerta-${a.status}">
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:14px">${a.emoji} ${a.label}</div>
+        <div style="color:var(--muted);font-size:12px;margin-top:2px">
+          ${a.kmUltimo>0 ? `Último: ${a.kmUltimo.toLocaleString()} km · ` : "Nunca feito · "}
+          ${a.kmFaltam>0 ? `Faltam ${a.kmFaltam.toLocaleString()} km` : `<span style="color:var(--red);font-weight:700">VENCIDO ${Math.abs(a.kmFaltam).toLocaleString()} km atrás</span>`}
+        </div>
+        <div class="prog-wrap"><div class="prog-fill" style="background:${a.status==="ok"?"var(--green)":a.status==="warn"?"var(--accent)":"var(--red)"};width:${a.pct}%"></div></div>
+      </div>
+      <button style="background:none;border:none;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;margin-left:10px;padding:4px 8px;border:1px solid var(--accent);border-radius:8px" onclick="marcarFeito('${a.id}','${a.label}')">✓ Feito</button>
+    </div>`).join("");
+
+  // Histórico de gastos
+  const historico = [...state.gastos].sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,20);
+  const histHTML = historico.length===0 ? "" : historico.map(g=>`
+    <div class="hist-card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700;font-size:14px">${g.categoria}</div>
+          <div style="color:var(--muted);font-size:12px">${g.desc||""} · 📅 ${g.data}${g.kmRegistro?" · "+g.kmRegistro.toLocaleString()+" km":""}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="color:var(--red);font-weight:800;font-size:16px">${brl(g.valor)}</div>
+          <button class="btn btn-red-outline btn-sm" onclick="delGasto(${g.id})">🗑️</button>
+        </div>
+      </div>
+    </div>`).join("");
+
+  const catBars = Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([cat,val])=>`
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px;font-size:13px">
+        <span>${cat}</span><span style="color:var(--red);font-weight:700">${brl(val)}</span>
+      </div>
+      <div class="bar-wrap"><div class="bar-fill" style="background:var(--red);width:${val/maxCat*100}%"></div></div>
+    </div>`).join("");
+
+  return `
+  <div class="gap-20">
+    <!-- Resumo do mês -->
+    <div class="stat-row">
+      <div class="stat-card"><div class="stat-label">Gastos no mês</div><div class="stat-value" style="color:var(--red)">${brl(totalMes)}</div><div class="stat-sub">${gastosMes.length} registros</div></div>
+      <div class="stat-card"><div class="stat-label">Lucro real</div><div class="stat-value" style="color:${lucroReal>0?"var(--green)":"var(--red)"}">${brl(lucroReal)}</div><div class="stat-sub">após gastos</div></div>
+    </div>
+
+    ${catBars ? `<div class="card"><div class="section-title">📊 Gastos por categoria (mês)</div>${catBars}</div>` : ""}
+
+    <!-- Km atual do veículo -->
+    <div class="card">
+      <div class="section-title">🚗 Quilometragem atual do veículo</div>
+      <div style="display:flex;gap:10px;align-items:flex-end">
+        <div class="form-group" style="flex:1"><label>KM atual</label><input type="number" id="km-atual" value="${state.kmAtual||""}" placeholder="Ex: 45000"></div>
+        <button class="btn btn-accent btn-sm" style="margin-bottom:1px" onclick="salvarKm()">Salvar</button>
+      </div>
+    </div>
+
+    <!-- Cronograma preventivo -->
+    <div class="card">
+      <div class="section-title">🔧 Cronograma de manutenção preventiva</div>
+      ${alertasHTML}
+    </div>
+
+    <!-- Registrar gasto -->
+    <div class="card">
+      <div class="section-title">➕ Registrar novo gasto</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Data</label><input type="date" id="g-data" value="${state.regGasto.data}" oninput="state.regGasto.data=this.value"></div>
+        <div class="form-group"><label>Categoria</label><select id="g-cat" oninput="state.regGasto.categoria=this.value">${catOpts}</select></div>
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="g-val" value="${state.regGasto.valor}" placeholder="Ex: 150.00" oninput="state.regGasto.valor=this.value"></div>
+        <div class="form-group"><label>KM ao registrar</label><input type="number" id="g-km" value="${state.regGasto.km}" placeholder="Ex: 45200" oninput="state.regGasto.km=this.value"></div>
+        <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="g-desc" value="${state.regGasto.desc}" placeholder="Ex: Troca de óleo 5W30" oninput="state.regGasto.desc=this.value"></div>
+      </div>
+      <button class="btn btn-accent" style="margin-top:14px" id="btn-gasto" onclick="salvarGasto()">💾 Registrar gasto</button>
+    </div>
+
+    <!-- Histórico -->
+    ${historico.length>0 ? `<div class="card"><div class="section-title">📋 Últimos 20 gastos</div>${histHTML}</div>` : ""}
+  </div>`;
+}
+
+function salvarKm() {
+  const v = parseFloat(document.getElementById("km-atual").value)||0;
+  state.kmAtual = v; save();
+  const btn = document.querySelector("#km-atual + button") || document.querySelectorAll(".btn-accent.btn-sm")[0];
+  render();
+}
+
+function marcarFeito(preventId, label) {
+  const kmVal = state.kmAtual || 0;
+  const g = {
+    id: Date.now(), data: today(), categoria: "Manutenção",
+    desc: label, valor: 0, kmRegistro: kmVal, preventivo: preventId,
+  };
+  state.gastos.unshift(g); save(); render();
+}
+
+function salvarGasto() {
+  if (!state.regGasto.valor) return;
+  const g = {
+    id: Date.now(),
+    data: state.regGasto.data,
+    categoria: state.regGasto.categoria,
+    desc: state.regGasto.desc,
+    valor: parseFloat(state.regGasto.valor)||0,
+    kmRegistro: parseFloat(state.regGasto.km)||state.kmAtual||0,
+    preventivo: null,
+  };
+  // Detectar se é manutenção preventiva pelo nome
+  for (const p of PREVENTIVOS) {
+    if (g.desc.toLowerCase().includes(p.label.toLowerCase().split(" ")[0])) {
+      g.preventivo = p.id; break;
+    }
+  }
+  state.gastos.unshift(g);
+  if (g.kmRegistro > state.kmAtual) state.kmAtual = g.kmRegistro;
+  save();
+  state.regGasto = {data:today(),categoria:"Combustível",desc:"",valor:"",km:""};
+  const btn = document.getElementById("btn-gasto");
+  if(btn){btn.textContent="✅ Salvo!";btn.className="btn btn-green";}
+  setTimeout(()=>render(), 1000);
+}
+
+function delGasto(id) {
+  if (!confirm("Excluir este gasto?")) return;
+  state.gastos = state.gastos.filter(g=>g.id!==id);
+  save(); render();
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -462,8 +665,8 @@ function salvarConfig() {
   setTimeout(()=>{btn.textContent="💾 Salvar configurações";btn.className="btn btn-accent";},2000);
 }
 function limparTudo() {
-  if (!confirm("Apagar TODOS os registros? Não tem volta!")) return;
-  state.corridas = []; save(); render();
+  if (!confirm("Apagar TODOS os registros e gastos? Não tem volta!")) return;
+  state.corridas = []; state.gastos = []; state.kmAtual = 0; save(); render();
 }
 
 function attachEvents() {}
